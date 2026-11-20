@@ -10,14 +10,14 @@ const DEFAULTS = {
 const SMOOTHING_MS = 24;
 const SPEED_GATE = 320; // px/s; slower movement never counts
 const TURN_ANGLE = 60; // degrees away from the current heading
-const MIN_ARC = 60; // px travelled between two direction changes
-const MIN_PATH = 450; // px of fast travel inside the window
+const MIN_ARC = 90; // px travelled between two direction changes
+const MIN_PATH = 550; // px of fast travel inside the window
 
 /**
  * Turns a stream of cursor positions into activation / deactivation events.
  *
  * A shake is recognised as sustained fast travel with repeated large heading
- * changes: three 60-degree turns and at least 450 px of movement inside the
+ * changes: three 60-degree turns and at least 550 px of movement inside the
  * window. Small tremors fail the arc/path thresholds, single flicks fail the
  * turn count, and vigorous circles produce turns as well, matching the
  * "shake until the pointer is obvious" intent.

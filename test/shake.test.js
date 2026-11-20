@@ -90,6 +90,12 @@ test('a short small wobble does not activate', () => {
   assert.strictEqual(run(detector, samples).filter((e) => e.type === 'activate').length, 0);
 });
 
+test('fast 40px trembling does not activate', () => {
+  const detector = new ShakeDetector(CONFIG);
+  const samples = sineSamples({ amplitude: 40, frequency: 6, duration: 1500 });
+  assert.strictEqual(run(detector, samples).filter((e) => e.type === 'activate').length, 0);
+});
+
 test('fast circular movement activates', () => {
   const detector = new ShakeDetector(CONFIG);
   const events = run(detector, circleSamples({ radius: 90, revolutionsPerSecond: 2 }));
