@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+    />
+    <link rel="stylesheet" href="settings.css" />
+    <title>Kangaroo</title>
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="titles">
+          <h1>Kangaroo</h1>
+        </div>
+        <div class="top-actions">
+          <button id="reset" class="button ghost" type="button">恢复默认</button>
+          <label class="switch">
+            <input type="checkbox" id="enabled" />
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span>启用</span>
+          </label>
+        </div>
+      </header>
+
+      <section class="preview-card">
+        <canvas id="preview"></canvas>
+        <div class="preview-foot">
+          <span class="preview-label">预览</span>
+          <button id="play" class="button small" type="button">重播</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>晃动判定</h2>
+        <div class="card fields">
+          <label class="field">
+            <span class="field-head">方向变化 <output id="turns-out"></output></span>
+            <input id="turns" type="range" min="2" max="7" step="1" />
+          </label>
+          <label class="field">
+            <span class="field-head">判定窗口 <output id="window-out"></output></span>
+            <input id="window" type="range" min="150" max="1500" step="50" />
+          </label>
+          <label class="field">
+            <span class="field-head">最低速度 <output id="speed-out"></output></span>
+            <input id="speed" type="range" min="150" max="3000" step="50" />
+          </label>
+          <label class="field">
+            <span class="field-head">收起延迟 <output id="idle-out"></output></span>
+            <input id="idle" type="range" min="100" max="2000" step="50" />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>光标外观</h2>
+        <div class="card fields">
+          <label class="field">
+            <span class="field-head">放大倍数 <output id="scale-out"></output></span>
+            <input id="scale" type="range" min="1.2" max="6" step="0.1" />
+          </label>
+          <label class="field">
+            <span class="field-head">光晕强度 <output id="glow-out"></output></span>
+            <input id="glow" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <label class="field">
+            <span class="field-head">不透明度 <output id="opacity-out"></output></span>
+            <input id="opacity" type="range" min="0.2" max="1" step="0.05" />
+          </label>
+          <label class="field">
+            <span class="field-head">强调色</span>
+            <input id="accent" type="color" />
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>放大动画</h2>
+        <div id="grow-card"></div>
+      </section>
+
+      <section>
+        <h2>收起动画</h2>
+        <div id="shrink-card"></div>
+      </section>
+
+      <section>
+        <h2>启动</h2>
+        <div class="card switch-row">
+          <span>随系统启动</span>
+          <label class="switch">
+            <input type="checkbox" id="autoStart" />
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+          </label>
+        </div>
+      </section>
+    </div>
+
+    <template id="anim-template">
+      <div class="card anim-card">
+        <div class="anim-top">
+          <div class="segmented">
+            <button type="button" data-mode="bezier">曲线</button>
+            <button type="button" data-mode="spring">弹簧</button>
+          </div>
+          <select class="preset"></select>
+        </div>
+        <div class="bezier-panel">
+          <canvas class="curve-canvas"></canvas>
+          <div class="curve-row">
+            <code class="curve-value"></code>
+            <label class="field inline">
+              <span class="field-head">时长 <output class="ms-out"></output></span>
+              <input class="ms-range" type="range" min="60" max="1200" step="10" />
+            </label>
+          </div>
+        </div>
+        <div class="spring-panel" hidden>
+          <canvas class="spring-canvas"></canvas>
+          <div class="fields three">
+            <label class="field">
+              <span class="field-head">刚度 <output data-out="stiffness"></output></span>
+              <input type="range" data-input="stiffness" min="40" max="1200" step="10" />
+            </label>
+            <label class="field">
+              <span class="field-head">阻尼 <output data-out="damping"></output></span>
+              <input type="range" data-input="damping" min="2" max="80" step="1" />
+            </label>
+            <label class="field">
+              <span class="field-head">质量 <output data-out="mass"></output></span>
+              <input type="range" data-input="mass" min="0.2" max="3" step="0.1" />
+            </label>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <script src="../shared/curves.js"></script>
+    <script src="../shared/cursor-sprite.js"></script>
+    <script src="../shared/cursor-anim.js"></script>
+    <script src="settings.js"></script>
+  </body>
+</html>
