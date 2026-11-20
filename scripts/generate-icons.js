@@ -252,6 +252,30 @@ function parseColor(color) {
   ];
 }
 
+function encodeIco(images) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(images.length, 4);
+
+  const directory = Buffer.alloc(16 * images.length);
+  let offset = 6 + directory.length;
+  images.forEach((image, index) => {
+    const base = index * 16;
+    directory[base] = image.size >= 256 ? 0 : image.size;
+    directory[base + 1] = image.size >= 256 ? 0 : image.size;
+    directory[base + 2] = 0;
+    directory[base + 3] = 0;
+    directory.writeUInt16LE(1, base + 4);
+    directory.writeUInt16LE(32, base + 6);
+    directory.writeUInt32LE(image.png.length, base + 8);
+    directory.writeUInt32LE(offset, base + 12);
+    offset += image.png.length;
+  });
+
+  return Buffer.concat([header, directory, ...images.map((image) => image.png)]);
+}
+
 const outDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -275,6 +299,23 @@ fs.writeFileSync(
     fill: '#ffffff',
     shadow: null
   })
+);
+
+const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+fs.writeFileSync(
+  path.join(outDir, 'icon.ico'),
+  encodeIco(
+    icoSizes.map((size) => ({
+      size,
+      png: render({
+        size,
+        markScale: 0.84,
+        background: '#161c26',
+        fill: '#ffffff',
+        shadow: null
+      })
+    }))
+  )
 );
 
 console.log('icons written to', outDir);
