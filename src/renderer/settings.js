@@ -1,11 +1,24 @@
 'use strict';
 
 const api = window.kangaroo;
+const t = (key, vars) => I18n.t(state ? state.language : 'en', key, vars);
 
-const CURVE_PAD = { left: 26, right: 18, top: 16, bottom: 20 };
-const CURVE_Y_MIN = -0.5;
-const CURVE_Y_MAX = 1.6;
+const SENSITIVITY = {
+  calm: { turns: 2, windowMs: 700, minSpeed: 750, minArc: 70, minPath: 400 },
+  standard: { turns: 3, windowMs: 600, minSpeed: 900, minArc: 90, minPath: 550 },
+  firm: { turns: 4, windowMs: 550, minSpeed: 1100, minArc: 120, minPath: 750 }
+};
+
+const PALETTE = ['#4da3ff', '#ffffff', '#ffd166', '#ff6b6b', '#7bd88f', '#c792ea', '#ff9f43'];
+
 const PREVIEW_HEIGHT = 232;
+const POINTER_HEIGHT = 300;
+const GESTURE_HEIGHT = 200;
+
+const ARROW_W = 13;
+const ARROW_H = 19.6;
+const ARROW_DIAG = Math.hypot(ARROW_W, ARROW_H);
+const GLOW_CENTER = { x: 5.2, y: 9.2 };
 
 let state = null;
 let cards = [];
@@ -14,10 +27,21 @@ let previewTimer = 0;
 let previewAnimator = null;
 let previewRaf = 0;
 let previewHoldAt = 0;
-let previewLoopTimer = 0;
 let lastPreviewRatio = 0;
 
+let gestureState = { phase: 'idle', calibrate: false, triggered: false, calibration: null };
+let gestureBusy = false;
+let lastGestureSample = null;
+
+let pointerGeometry = null;
+let pointerDrag = null;
+
 const previewCanvas = document.getElementById('preview');
+const pointerCanvas = document.getElementById('pointer');
+const gestureCanvas = document.getElementById('gesture');
+const gestureStatus = document.getElementById('gesture-status');
+const pointerMeta = document.getElementById('pointer-meta');
+const swatchBar = document.getElementById('swatches');
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const round = (value, digits) => {
@@ -44,11 +68,12 @@ function prepareCanvas(canvas, cssHeight) {
 }
 
 function plotRect(width, height) {
+  const pad = { left: 26, right: 18, top: 16, bottom: 20 };
   return {
-    x: CURVE_PAD.left,
-    y: CURVE_PAD.top,
-    w: Math.max(20, width - CURVE_PAD.left - CURVE_PAD.right),
-    h: Math.max(20, height - CURVE_PAD.top - CURVE_PAD.bottom)
+    x: pad.left,
+    y: pad.top,
+    w: Math.max(20, width - pad.left - pad.right),
+    h: Math.max(20, height - pad.top - pad.bottom)
   };
 }
 
@@ -70,12 +95,16 @@ function strokeLine(ctx, x1, y1, x2, y2) {
   ctx.stroke();
 }
 
+/* ------------------------------------------------------------- curve editor */
+
 function drawCurve(canvas, bezier) {
   const { ctx, width, height } = prepareCanvas(canvas, 200);
   const plot = plotRect(width, height);
-  const accent = (state && state.visual && state.visual.accent) || '#4da3ff';
+  const accent = state.visual.accent;
+  const yMin = -0.5;
+  const yMax = 1.6;
   const toX = (p) => plot.x + p * plot.w;
-  const toY = (v) => curveY(v, plot, CURVE_Y_MIN, CURVE_Y_MAX);
+  const toY = (v) => curveY(v, plot, yMin, yMax);
 
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.055)';
   ctx.lineWidth = 1;
@@ -101,9 +130,8 @@ function drawCurve(canvas, bezier) {
 
   const ease = Curves.cubicBezier(bezier[0], bezier[1], bezier[2], bezier[3]);
   ctx.beginPath();
-  const steps = 180;
-  for (let i = 0; i <= steps; i += 1) {
-    const p = i / steps;
+  for (let i = 0; i <= 180; i += 1) {
+    const p = i / 180;
     const x = toX(p);
     const y = toY(ease(p));
     if (i === 0) ctx.moveTo(x, y);
@@ -133,15 +161,15 @@ function drawCurve(canvas, bezier) {
 
 function controlPixels(bezier, plot) {
   return [
-    { x: plot.x + bezier[0] * plot.w, y: curveY(bezier[1], plot, CURVE_Y_MIN, CURVE_Y_MAX) },
-    { x: plot.x + bezier[2] * plot.w, y: curveY(bezier[3], plot, CURVE_Y_MIN, CURVE_Y_MAX) }
+    { x: plot.x + bezier[0] * plot.w, y: curveY(bezier[1], plot, -0.5, 1.6) },
+    { x: plot.x + bezier[2] * plot.w, y: curveY(bezier[3], plot, -0.5, 1.6) }
   ];
 }
 
 function drawSpring(canvas, spring) {
   const { ctx, width, height } = prepareCanvas(canvas, 152);
   const plot = plotRect(width, height);
-  const accent = (state && state.visual && state.visual.accent) || '#4da3ff';
+  const accent = state.visual.accent;
   const samples = Curves.sampleSpring(spring, 1, 900, 6);
   let peak = 0;
   for (const sample of samples) peak = Math.max(peak, sample.value, 0);
@@ -191,11 +219,15 @@ function drawSpring(canvas, spring) {
   ctx.stroke();
 }
 
-/* ------------------------------------------------------------------- cards */
+/* --------------------------------------------------------------- animation */
 
 function formatSpring(name, value) {
   if (name === 'mass') return value.toFixed(1);
   return String(Math.round(value));
+}
+
+function presetLabel(id) {
+  return t(`preset_${String(id).replace(/-/g, '')}`);
 }
 
 function buildAnimCard(host, key) {
@@ -218,12 +250,13 @@ function buildAnimCard(host, key) {
   for (const preset of Curves.PRESETS) {
     const option = document.createElement('option');
     option.value = preset.id;
-    option.textContent = preset.label;
+    option.dataset.preset = preset.id;
+    option.textContent = presetLabel(preset.id);
     elements.preset.appendChild(option);
   }
   const custom = document.createElement('option');
   custom.value = 'custom';
-  custom.textContent = '自定义';
+  custom.textContent = t('custom');
   custom.disabled = true;
   elements.preset.appendChild(custom);
 
@@ -262,6 +295,13 @@ function buildAnimCard(host, key) {
     for (const name of Object.keys(springInputs)) {
       springInputs[name].value = String(anim.spring[name]);
       springOutputs[name].textContent = formatSpring(name, anim.spring[name]);
+    }
+  }
+
+  function localize() {
+    custom.textContent = t('custom');
+    for (const option of elements.preset.querySelectorAll('option[data-preset]')) {
+      option.textContent = presetLabel(option.dataset.preset);
     }
   }
 
@@ -327,11 +367,9 @@ function buildAnimCard(host, key) {
     const rect = elements.curve.getBoundingClientRect();
     const plot = plotRect(rect.width, rect.height);
     const p = (event.clientX - rect.left - plot.x) / plot.w;
-    const v =
-      CURVE_Y_MAX -
-      ((event.clientY - rect.top - plot.y) / plot.h) * (CURVE_Y_MAX - CURVE_Y_MIN);
+    const v = 1.6 - ((event.clientY - rect.top - plot.y) / plot.h) * 2.1;
     anim.bezier[dragIndex * 2] = round(clamp(p, 0, 1));
-    anim.bezier[dragIndex * 2 + 1] = round(clamp(v, CURVE_Y_MIN, CURVE_Y_MAX));
+    anim.bezier[dragIndex * 2 + 1] = round(clamp(v, -0.5, 1.6));
     render();
     touch();
   });
@@ -348,10 +386,315 @@ function buildAnimCard(host, key) {
   elements.curve.addEventListener('pointerup', endDrag);
   elements.curve.addEventListener('pointercancel', endDrag);
 
-  return { render };
+  return { render, localize };
 }
 
-/* ----------------------------------------------------------------- preview */
+/* ---------------------------------------------------------------- pointer */
+
+function glowRingRadius(scale, glow) {
+  return (14 + 18 * glow) * scale;
+}
+
+function drawHandle(ctx, x, y, label, accent) {
+  ctx.beginPath();
+  ctx.arc(x, y, 7, 0, Math.PI * 2);
+  ctx.fillStyle = accent;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#0d1014';
+  ctx.stroke();
+
+  ctx.font = '11px "Segoe UI", "Microsoft YaHei UI", sans-serif';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + 12, y);
+}
+
+function drawPointer() {
+  const { ctx, width, height } = prepareCanvas(pointerCanvas, POINTER_HEIGHT);
+  if (!state) return;
+
+  const scale = state.visual.scale;
+  const accent = state.visual.accent;
+  const hx = width * 0.34;
+  const hy = height * 0.22;
+  const glowCenter = { x: hx + GLOW_CENTER.x * scale, y: hy + GLOW_CENTER.y * scale };
+  const ring = glowRingRadius(scale, state.visual.glow);
+  pointerGeometry = { hx, hy, scale, glowCenter, ring };
+
+  ctx.setLineDash([4, 5]);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+  strokeLine(ctx, hx, hy, hx + ARROW_W * scale, hy);
+  strokeLine(ctx, hx + ARROW_W * scale, hy, hx + ARROW_W * scale, hy + ARROW_H * scale);
+  strokeLine(ctx, hx + ARROW_W * scale, hy + ARROW_H * scale, hx, hy + ARROW_H * scale);
+  strokeLine(ctx, hx, hy + ARROW_H * scale, hx, hy);
+  ctx.setLineDash([]);
+
+  CursorSprite.draw(ctx, hx, hy, scale, {
+    accent,
+    glow: state.visual.glow,
+    opacity: 1,
+    fill: '#ffffff',
+    stroke: '#15171c'
+  });
+
+  ctx.beginPath();
+  ctx.arc(glowCenter.x, glowCenter.y, ring, 0, Math.PI * 2);
+  ctx.setLineDash([5, 5]);
+  ctx.strokeStyle = clipAlpha(accent, 0.35);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  drawHandle(ctx, hx + ARROW_W * scale, hy + ARROW_H * scale, t('pointerSize'), accent);
+  drawHandle(ctx, glowCenter.x + ring, glowCenter.y, t('pointerGlow'), accent);
+}
+
+function syncPointerMeta() {
+  if (!state) return;
+  pointerMeta.textContent = t('pointerMeta', {
+    size: state.visual.scale.toFixed(1),
+    glow: Math.round(state.visual.glow * 100)
+  });
+}
+
+function localPoint(event) {
+  const rect = pointerCanvas.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
+function handlePositions() {
+  if (!pointerGeometry) return null;
+  const { hx, hy, scale, glowCenter, ring } = pointerGeometry;
+  return {
+    size: { x: hx + ARROW_W * scale, y: hy + ARROW_H * scale },
+    glow: { x: glowCenter.x + ring, y: glowCenter.y }
+  };
+}
+
+function bindPointer() {
+  pointerCanvas.addEventListener('pointerdown', (event) => {
+    const positions = handlePositions();
+    if (!positions) return;
+    const point = localPoint(event);
+    const sizeDistance = Math.hypot(point.x - positions.size.x, point.y - positions.size.y);
+    const glowDistance = Math.hypot(point.x - positions.glow.x, point.y - positions.glow.y);
+
+    if (Math.min(sizeDistance, glowDistance) > 22) return;
+    pointerDrag = {
+      mode: sizeDistance <= glowDistance ? 'size' : 'glow',
+      pointerId: event.pointerId
+    };
+    pointerCanvas.setPointerCapture(event.pointerId);
+    pointerCanvas.style.cursor = 'grabbing';
+    event.preventDefault();
+  });
+
+  pointerCanvas.addEventListener('pointermove', (event) => {
+    const point = localPoint(event);
+
+    if (!pointerDrag) {
+      const positions = handlePositions();
+      if (!positions) return;
+      const sizeDistance = Math.hypot(point.x - positions.size.x, point.y - positions.size.y);
+      const glowDistance = Math.hypot(point.x - positions.glow.x, point.y - positions.glow.y);
+      pointerCanvas.style.cursor = Math.min(sizeDistance, glowDistance) <= 22 ? 'grab' : 'default';
+      return;
+    }
+
+    if (event.pointerId !== pointerDrag.pointerId || !pointerGeometry) return;
+    const { hx, hy, scale, glowCenter } = pointerGeometry;
+
+    if (pointerDrag.mode === 'size') {
+      const distance = Math.hypot(point.x - hx, point.y - hy);
+      state.visual.scale = round(clamp(distance / ARROW_DIAG, 1.2, 6), 2);
+    } else {
+      const distance = Math.hypot(point.x - glowCenter.x, point.y - glowCenter.y);
+      state.visual.glow = round(clamp((distance / scale - 14) / 18, 0, 1), 2);
+    }
+
+    syncPointerMeta();
+    drawPointer();
+    drawPreview(lastPreviewRatio);
+    touch();
+  });
+
+  function endDrag(event) {
+    if (!pointerDrag) return;
+    if (event && event.pointerId !== pointerDrag.pointerId) return;
+    pointerDrag = null;
+    pointerCanvas.style.cursor = 'default';
+    flushSave();
+  }
+
+  pointerCanvas.addEventListener('pointerup', endDrag);
+  pointerCanvas.addEventListener('pointercancel', endDrag);
+}
+
+/* ---------------------------------------------------------------- gesture */
+
+function setGestureStatus(text) {
+  gestureStatus.textContent = text;
+}
+
+function updateLiveStatus(sample) {
+  if (!sample || !sample.points || sample.points.length < 2) {
+    setGestureStatus(t(gestureState.calibrate ? 'calibrating' : 'gestureListening'));
+    return;
+  }
+  const metrics = sample.metrics;
+  const thresholds = sample.thresholds;
+  setGestureStatus(
+    t('gestureLive', {
+      path: Math.round(metrics.path),
+      minPath: thresholds.minPath,
+      turns: metrics.turns,
+      minTurns: thresholds.turns,
+      peak: Math.round(metrics.peak),
+      minSpeed: thresholds.minSpeed
+    })
+  );
+}
+
+function renderGestureStatus() {
+  if (gestureState.phase === 'listening') {
+    updateLiveStatus(lastGestureSample);
+    return;
+  }
+  if (gestureState.phase === 'done') {
+    if (gestureState.calibrate) {
+      setGestureStatus(t(gestureState.calibration ? 'calibrated' : 'calibrateFailed'));
+    } else {
+      setGestureStatus(t(gestureState.triggered ? 'gestureTriggered' : 'gestureMissed'));
+    }
+    return;
+  }
+  setGestureStatus(t('gestureIdle'));
+}
+
+function updateGestureButtons() {
+  document.getElementById('gesture-test').disabled = gestureBusy;
+  document.getElementById('gesture-calibrate').disabled = gestureBusy;
+}
+
+function drawGesture() {
+  const { ctx, width, height } = prepareCanvas(gestureCanvas, GESTURE_HEIGHT);
+  const sample = lastGestureSample;
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
+  ctx.lineWidth = 1;
+  for (let x = 20; x < width; x += 40) strokeLine(ctx, x, 0, x, height);
+  for (let y = 20; y < height; y += 40) strokeLine(ctx, 0, y, width, y);
+
+  if (!sample || !sample.points || sample.points.length < 2) return;
+
+  const points = sample.points;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+
+  const padding = 30;
+  const worldW = Math.max(160, maxX - minX);
+  const worldH = Math.max(120, maxY - minY);
+  const scale = Math.min(
+    (width - padding * 2) / worldW,
+    (height - padding * 2) / worldH,
+    2.2
+  );
+  const offsetX = width / 2 - ((minX + maxX) / 2) * scale;
+  const offsetY = height / 2 - ((minY + maxY) / 2) * scale;
+  const map = (point) => ({ x: point.x * scale + offsetX, y: point.y * scale + offsetY });
+
+  const accent = state.visual.accent;
+
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const mapped = map(point);
+    if (index === 0) ctx.moveTo(mapped.x, mapped.y);
+    else ctx.lineTo(mapped.x, mapped.y);
+  });
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  if (sample.turns) {
+    for (const turn of sample.turns) {
+      const mapped = map(turn);
+      ctx.beginPath();
+      ctx.arc(mapped.x, mapped.y, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#0d1014';
+      ctx.fill();
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  const last = map(points[points.length - 1]);
+  ctx.beginPath();
+  ctx.arc(last.x, last.y, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = accent;
+  ctx.fill();
+}
+
+async function runGesture(calibrate) {
+  if (gestureBusy) return;
+  gestureBusy = true;
+  lastGestureSample = null;
+  gestureState = { phase: 'listening', calibrate, triggered: false, calibration: null };
+  updateGestureButtons();
+  renderGestureStatus();
+  drawGesture();
+
+  try {
+    const result = await api.runGesture({ calibrate, durationMs: 6000 });
+    if (!result || result.busy) {
+      gestureState.phase = 'idle';
+    } else {
+      gestureState.phase = 'done';
+      gestureState.triggered = Boolean(result.triggered);
+      gestureState.calibration = result.calibration || null;
+      if (result.trace && result.trace.points && result.trace.points.length) {
+        lastGestureSample = {
+          points: result.trace.points,
+          turns: result.trace.turns || [],
+          metrics: result.metrics || {},
+          thresholds: state.trigger,
+          triggered: gestureState.triggered
+        };
+      }
+      if (gestureState.calibration) {
+        state.trigger = { ...state.trigger, ...gestureState.calibration };
+        syncSensitivity();
+      }
+    }
+  } catch (error) {
+    gestureState.phase = 'idle';
+  } finally {
+    gestureBusy = false;
+    updateGestureButtons();
+    renderGestureStatus();
+    drawGesture();
+  }
+}
+
+api.onGestureSample((sample) => {
+  if (!gestureBusy) return;
+  lastGestureSample = sample;
+  drawGesture();
+  if (gestureState.phase === 'listening') updateLiveStatus(sample);
+});
+
+/* ---------------------------------------------------------------- preview */
 
 function drawPreviewBackground(ctx, width, height) {
   const gradient = ctx.createRadialGradient(
@@ -394,10 +737,6 @@ function drawPreview(ratio) {
 function playPreview() {
   if (!state) return;
   if (previewRaf) cancelAnimationFrame(previewRaf);
-  if (previewLoopTimer) {
-    clearTimeout(previewLoopTimer);
-    previewLoopTimer = 0;
-  }
   previewRaf = 0;
   previewAnimator = new CursorAnimator(state);
   previewAnimator.grow(performance.now());
@@ -420,101 +759,113 @@ function previewTick(now) {
   drawPreview(result.ratio);
 
   if (previewAnimator.phase === 'idle' && result.ratio <= 0.001) {
-    previewLoopTimer = setTimeout(() => {
-      previewLoopTimer = 0;
-      playPreview();
-    }, 900);
+    playPreview();
     return;
   }
   previewRaf = requestAnimationFrame(previewTick);
 }
 
-/* ------------------------------------------------------------------ bindings */
+/* --------------------------------------------------------------- language */
 
-const RANGE_BINDINGS = [
-  [
-    'turns',
-    'turns-out',
-    () => state.trigger.turns,
-    (value) => {
-      state.trigger.turns = Math.round(value);
-    },
-    (value) => `${Math.round(value)} 次`
-  ],
-  [
-    'window',
-    'window-out',
-    () => state.trigger.windowMs,
-    (value) => {
-      state.trigger.windowMs = Math.round(value);
-    },
-    (value) => `${Math.round(value)} ms`
-  ],
-  [
-    'speed',
-    'speed-out',
-    () => state.trigger.minSpeed,
-    (value) => {
-      state.trigger.minSpeed = Math.round(value);
-    },
-    (value) => `${Math.round(value)} px/s`
-  ],
-  [
-    'idle',
-    'idle-out',
-    () => state.trigger.idleMs,
-    (value) => {
-      state.trigger.idleMs = Math.round(value);
-    },
-    (value) => `${Math.round(value)} ms`
-  ],
-  [
-    'scale',
-    'scale-out',
-    () => state.visual.scale,
-    (value) => {
-      state.visual.scale = round(value, 2);
-    },
-    (value) => `${value.toFixed(1)}×`
-  ],
-  [
-    'glow',
-    'glow-out',
-    () => state.visual.glow,
-    (value) => {
-      state.visual.glow = round(value, 2);
-    },
-    (value) => `${Math.round(value * 100)}%`
-  ],
-  [
-    'opacity',
-    'opacity-out',
-    () => state.visual.opacity,
-    (value) => {
-      state.visual.opacity = round(value, 2);
-    },
-    (value) => `${Math.round(value * 100)}%`
-  ]
-];
+function updateLanguageButtons() {
+  for (const button of document.querySelectorAll('[data-lang]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.lang === state.language));
+  }
+}
+
+function applyLanguage() {
+  document.documentElement.lang = state.language === 'zh' ? 'zh-CN' : 'en';
+  for (const element of document.querySelectorAll('[data-i18n]')) {
+    element.textContent = t(element.dataset.i18n);
+  }
+  for (const card of cards) card.localize();
+  updateLanguageButtons();
+  syncPointerMeta();
+  renderGestureStatus();
+  drawPointer();
+  drawGesture();
+  drawPreview(lastPreviewRatio);
+}
+
+/* -------------------------------------------------------------- sensitivity */
+
+function matchSensitivity() {
+  for (const [level, preset] of Object.entries(SENSITIVITY)) {
+    const matches = Object.keys(preset).every((key) => state.trigger[key] === preset[key]);
+    if (matches) return level;
+  }
+  return null;
+}
+
+function syncSensitivity() {
+  const level = matchSensitivity();
+  for (const button of document.querySelectorAll('#sensitivity [data-level]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.level === level));
+  }
+}
+
+/* ---------------------------------------------------------------- swatches */
+
+function buildSwatches() {
+  swatchBar.textContent = '';
+  for (const color of PALETTE) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'swatch';
+    button.dataset.color = color;
+    button.style.background = color;
+    button.title = color;
+    button.addEventListener('click', () => setAccent(color));
+    swatchBar.appendChild(button);
+  }
+
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.className = 'swatch-input';
+  input.addEventListener('input', () => setAccent(input.value));
+  swatchBar.appendChild(input);
+}
+
+function syncSwatches() {
+  for (const button of swatchBar.querySelectorAll('.swatch')) {
+    button.setAttribute(
+      'aria-pressed',
+      String(button.dataset.color.toLowerCase() === state.visual.accent.toLowerCase())
+    );
+  }
+  const input = swatchBar.querySelector('.swatch-input');
+  if (input) input.value = state.visual.accent;
+}
+
+function setAccent(color) {
+  state.visual.accent = color.toLowerCase();
+  syncSwatches();
+  drawPointer();
+  drawPreview(lastPreviewRatio);
+  touch();
+}
+
+/* --------------------------------------------------------------- bindings */
 
 function bindStaticControls() {
-  for (const [inputId, outputId, , set, format] of RANGE_BINDINGS) {
-    const input = document.getElementById(inputId);
-    const output = document.getElementById(outputId);
-    input.addEventListener('input', () => {
-      const value = Number(input.value);
-      set(value);
-      output.textContent = format(value);
+  for (const button of document.querySelectorAll('[data-lang]')) {
+    button.addEventListener('click', () => {
+      if (state.language === button.dataset.lang) return;
+      state.language = button.dataset.lang;
+      applyLanguage();
       touch();
     });
   }
 
-  const accent = document.getElementById('accent');
-  accent.addEventListener('input', () => {
-    state.visual.accent = accent.value;
-    for (const card of cards) card.render();
-    touch();
-  });
+  for (const button of document.querySelectorAll('#sensitivity [data-level]')) {
+    button.addEventListener('click', () => {
+      const preset = SENSITIVITY[button.dataset.level];
+      if (!preset) return;
+      state.trigger = { ...state.trigger, ...preset };
+      syncSensitivity();
+      touch();
+    });
+  }
 
   document.getElementById('enabled').addEventListener('change', (event) => {
     state.enabled = event.target.checked;
@@ -529,30 +880,30 @@ function bindStaticControls() {
   document.getElementById('reset').addEventListener('click', async () => {
     state = await api.resetConfig();
     syncControls();
+    applyLanguage();
     schedulePreview();
   });
 
   document.getElementById('play').addEventListener('click', () => playPreview());
+  document.getElementById('gesture-test').addEventListener('click', () => runGesture(false));
+  document.getElementById('gesture-calibrate').addEventListener('click', () => runGesture(true));
+
+  buildSwatches();
+  bindPointer();
 }
 
 function syncControls() {
   document.getElementById('enabled').checked = Boolean(state.enabled);
   document.getElementById('autoStart').checked = Boolean(state.autoStart);
-
-  for (const [inputId, outputId, get, , format] of RANGE_BINDINGS) {
-    const input = document.getElementById(inputId);
-    const output = document.getElementById(outputId);
-    const value = get();
-    input.value = String(value);
-    output.textContent = format(value);
-  }
-
-  document.getElementById('accent').value = state.visual.accent;
-
+  syncSensitivity();
+  syncSwatches();
   for (const card of cards) card.render();
+  syncPointerMeta();
+  drawPointer();
+  drawPreview(lastPreviewRatio);
 }
 
-/* ------------------------------------------------------------------ plumbing */
+/* --------------------------------------------------------------- plumbing */
 
 function touch() {
   schedulePreview();
@@ -581,6 +932,8 @@ function schedulePreview() {
 
 function handleResize() {
   for (const card of cards) card.render();
+  drawPointer();
+  drawGesture();
   drawPreview(lastPreviewRatio);
 }
 
@@ -594,15 +947,18 @@ async function init() {
 
   bindStaticControls();
   syncControls();
+  applyLanguage();
 
   api.onConfigChanged((config) => {
     if (!state || JSON.stringify(config) === JSON.stringify(state)) return;
+    const languageChanged = config.language !== state.language;
     state = config;
     syncControls();
-    schedulePreview();
+    if (languageChanged) applyLanguage();
   });
 
   window.addEventListener('resize', handleResize);
+  updateGestureButtons();
   requestAnimationFrame(() => playPreview());
 }
 

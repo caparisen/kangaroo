@@ -14,6 +14,8 @@ const {
 const { ConfigStore } = require('./config');
 const { ShakeDetector } = require('./shake');
 const { OverlayManager } = require('./overlays');
+const { GestureSession } = require('./gesture');
+const { t } = require('../shared/i18n');
 
 const POLL_MS = 12;
 const ROOT = path.join(__dirname, '..', '..');
@@ -33,6 +35,7 @@ let tray = null;
 let settingsWindow = null;
 let pollTimer = null;
 let autoStartApplied = null;
+let gestureSession = null;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -68,11 +71,15 @@ function boot() {
 
 function poll() {
   if (!store) return;
+  const point = screen.getCursorScreenPoint();
+  const now = Date.now();
+
+  if (gestureSession) gestureSession.push(now, point);
+
   const config = store.get();
   if (!config.enabled) return;
 
-  const point = screen.getCursorScreenPoint();
-  const result = detector.push(Date.now(), point.x, point.y);
+  const result = detector.push(now, point.x, point.y);
 
   if (result.activated) {
     overlays.show(point);
@@ -123,7 +130,7 @@ function setEnabled(enabled) {
 function createTray() {
   const image = nativeImage.createFromPath(TRAY_ICON);
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
-  tray.setToolTip('Kangaroo');
+  tray.setToolTip(t(store.get().language, 'tooltip'));
   updateTrayMenu();
   tray.on('double-click', () => openSettings());
 }
@@ -131,17 +138,19 @@ function createTray() {
 function updateTrayMenu() {
   if (!tray || tray.isDestroyed()) return;
   const config = store.get();
+  const language = config.language;
+  tray.setToolTip(t(language, 'tooltip'));
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: '启用晃动放大',
+        label: t(language, 'trayEnable'),
         type: 'checkbox',
         checked: config.enabled,
         click: (item) => setEnabled(item.checked)
       },
-      { label: '设置…', click: () => openSettings() },
+      { label: t(language, 'traySettings'), click: () => openSettings() },
       { type: 'separator' },
-      { label: '退出', click: () => app.quit() }
+      { label: t(language, 'trayQuit'), click: () => app.quit() }
     ])
   );
 }
@@ -183,12 +192,37 @@ function registerIpc() {
   ipcMain.handle('config:get', () => store.get());
   ipcMain.handle('config:update', (_event, patch) => store.update(patch));
   ipcMain.handle('config:reset', () => store.reset());
+  ipcMain.handle('gesture:run', (event, options) => startGesture(event, options));
   ipcMain.on('overlay:done', (event) => overlays.finished(event.sender));
+}
+
+function startGesture(event, options) {
+  if (gestureSession) return Promise.resolve({ busy: true });
+
+  const durationMs = Math.min(10000, Math.max(2000, Number(options && options.durationMs) || 6000));
+  const calibrate = Boolean(options && options.calibrate);
+
+  return new Promise((resolve) => {
+    gestureSession = new GestureSession({
+      webContents: event.sender,
+      trigger: store.get().trigger,
+      durationMs,
+      calibrate,
+      onFinish: (result) => {
+        gestureSession = null;
+        if (result.calibration) {
+          store.update({ trigger: { ...store.get().trigger, ...result.calibration } });
+        }
+        resolve(result);
+      }
+    });
+  });
 }
 
 function shutdown() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = null;
+  if (gestureSession) gestureSession.finish();
   if (overlays) overlays.destroy();
   if (store) store.save();
   if (tray && !tray.isDestroyed()) tray.destroy();

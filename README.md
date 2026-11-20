@@ -1,57 +1,58 @@
 # Kangaroo
 
-Windows 桌面小工具：晃动鼠标时放大光标，停止晃动后自动收起。
+Windows tray app: shake the mouse and a larger pointer appears; it shrinks back when you stop.
 
-## 运行
+## Run
 
-需要 Node.js 18+。
+Requires Node.js 18+.
 
 ```powershell
 npm install
 npm start
 ```
 
-启动后常驻系统托盘，不显示主窗口。直接打开设置窗口：
+The app lives in the system tray and shows no main window. Open the settings window directly:
 
 ```powershell
 npm start -- --settings
 ```
 
-首次启动会自动打开设置。托盘菜单可以启用/停用、打开设置、退出。
+Settings open automatically on the first launch. The tray menu can enable/disable the app, open settings, or quit.
 
-## 使用
+## Usage
 
-- 快速晃动鼠标，放大指针出现；停止晃动约 0.5 秒后收起。
-- 触发条件：600 ms 内至少 3 次 60° 以上的方向变化，且高速移动总路程达到 550 px。小幅抖动、单次甩动不会触发；大幅快速画圆会触发。
-- 托盘图标：袋鼠剪影。
+- Shake the mouse quickly: the enlarged pointer appears and follows the cursor.
+- Stop shaking: the pointer shrinks back after about half a second.
+- Default trigger: 3 direction changes of at least 60°, 90 px between turns, 550 px of fast travel inside 600 ms and a 900 px/s peak. Small tremors and single flicks do not trigger; large fast circles do.
 
-## 设置
+## Settings
 
-- **晃动判定**：方向变化次数、判定窗口、最低速度、收起延迟。
-- **光标外观**：放大倍数、光晕强度、不透明度、强调色。
-- **放大/收起动画**：每种动画可选用曲线或弹簧。
-  - 曲线模式：拖动贝塞尔控制点，或从预设中选（线性、缓出、急停、回弹等），可调时长。
-  - 弹簧模式：调刚度、阻尼、质量，带实时响应曲线。
-- **启动**：随系统启动开关。
-- 顶部预览按当前参数循环播放。
-- 配置保存在 `%APPDATA%\kangaroo\config.json`。
+- **Language**: English (default) or Chinese, also applied to the tray menu.
+- **Start with Windows** and **Enabled**: switches in the header.
+- **Trigger**:
+  - Sensitivity presets: Calm / Standard / Firm.
+  - Gesture monitor: shake anywhere on screen; the real cursor path, turns and thresholds are drawn live. The monitor ends automatically shortly after a trigger.
+  - **Test** to see whether a gesture would trigger, **Calibrate** to derive thresholds from your own shake.
+- **Pointer**: drag the handles on the preview to resize the pointer or strengthen the glow; click a colour swatch or pick a custom colour.
+- **Animations**: bezier curve editor with draggable control points and presets, or a spring with stiffness/damping/mass. The preview loops continuously.
+- Settings are stored in `%APPDATA%\kangaroo\config.json`.
 
-## 实现
+## How it works
 
-- Electron 主进程每 12 ms 读取一次光标位置，根据方向变化次数、移动路程和速度识别「晃动」。
-- 每块显示器一个透明、鼠标穿透、置顶的遮罩窗口；放大指针用 DOM 图片绘制，动画由共享的贝塞尔/弹簧引擎逐帧计算。
-- 设置窗口用 Canvas 绘制曲线编辑器和预览。
+- The main process samples the cursor every 12 ms and detects shakes from heading changes, travel distance and speed.
+- One transparent, click-through, always-on-top window per display draws the enlarged pointer as a DOM image; animations are computed by the shared easing/spring engine.
+- The settings window uses Canvas for the gesture monitor, the pointer editor and the animation previews.
 
-## 测试
+## Tests
 
 ```powershell
 npm test
 ```
 
-覆盖晃动检测（真实晃动、小幅抖动、快速画圆、慢速移动、单次甩动）和动画曲线/弹簧数值。
+Covers shake detection (real shakes, tremors, circular motion, slow movement, single flicks), calibration, config migration and the animation curves/spring.
 
-## 说明
+## Notes
 
-- 放大的指针是画在光标上方的图形，Windows 系统光标本身不变，所以原光标仍会显示在放大箭头内部。
-- 遮罩窗口只在晃动后出现，空闲时隐藏，不拦截鼠标点击。
-- 随系统启动在开发模式下注册的是 `electron.exe` 加项目路径；打包后注册应用自身。
+- The enlarged pointer is drawn above the system cursor, so the original cursor stays visible inside it.
+- Overlay windows only appear while the enlarged pointer is shown; they never intercept clicks.
+- In development mode "Start with Windows" registers `electron.exe` plus the project path; a packaged build registers the app itself.

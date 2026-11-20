@@ -4,14 +4,14 @@ const DEFAULTS = {
   turns: 3,
   windowMs: 600,
   minSpeed: 900,
+  minArc: 90,
+  minPath: 550,
   idleMs: 500
 };
 
 const SMOOTHING_MS = 24;
 const SPEED_GATE = 320; // px/s; slower movement never counts
 const TURN_ANGLE = 60; // degrees away from the current heading
-const MIN_ARC = 90; // px travelled between two direction changes
-const MIN_PATH = 550; // px of fast travel inside the window
 
 /**
  * Turns a stream of cursor positions into activation / deactivation events.
@@ -38,11 +38,12 @@ class ShakeDetector {
     this.vy = 0;
     this.heading = null;
     this.arc = 0;
-    this.turns = [];
+    this.turnPoints = [];
     this.paths = [];
     this.speeds = [];
     this.active = false;
     this.lastShakeAt = 0;
+    this.metrics = { turns: 0, path: 0, peak: 0, arc: 0 };
   }
 
   push(now, x, y) {
@@ -87,8 +88,8 @@ class ShakeDetector {
       } else {
         const dot = Math.max(-1, Math.min(1, ux * this.heading.x + uy * this.heading.y));
         const angle = (Math.acos(dot) * 180) / Math.PI;
-        if (angle >= TURN_ANGLE && this.arc >= MIN_ARC) {
-          this.turns.push(now);
+        if (angle >= TURN_ANGLE && this.arc >= this.trigger.minArc) {
+          this.turnPoints.push({ t: now, x, y });
           this.heading = { x: ux, y: uy };
           this.arc = 0;
           if (this.active) this.lastShakeAt = now;
@@ -102,7 +103,7 @@ class ShakeDetector {
     this.speeds.push({ t: now, v: speed });
 
     const cutoff = now - this.trigger.windowMs;
-    while (this.turns.length && this.turns[0] < cutoff) this.turns.shift();
+    while (this.turnPoints.length && this.turnPoints[0].t < cutoff) this.turnPoints.shift();
     while (this.paths.length && this.paths[0].t < cutoff) this.paths.shift();
     while (this.speeds.length && this.speeds[0].t < cutoff) this.speeds.shift();
 
@@ -110,21 +111,22 @@ class ShakeDetector {
     for (const segment of this.paths) path += segment.d;
     let peak = 0;
     for (const sample of this.speeds) peak = Math.max(peak, sample.v);
+    this.metrics = { turns: this.turnPoints.length, path, peak, arc: this.arc };
 
     if (
       !this.active &&
-      this.turns.length >= this.trigger.turns &&
-      path >= MIN_PATH &&
+      this.turnPoints.length >= this.trigger.turns &&
+      path >= this.trigger.minPath &&
       peak >= this.trigger.minSpeed
     ) {
       this.active = true;
       this.lastShakeAt = now;
-      this.turns.length = 0;
+      this.turnPoints.length = 0;
       this.arc = 0;
       result.activated = true;
     } else if (this.active && now - this.lastShakeAt > this.trigger.idleMs) {
       this.active = false;
-      this.turns.length = 0;
+      this.turnPoints.length = 0;
       this.paths.length = 0;
       this.arc = 0;
       this.heading = null;
