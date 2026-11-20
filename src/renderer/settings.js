@@ -42,6 +42,8 @@ const gestureCanvas = document.getElementById('gesture');
 const gestureStatus = document.getElementById('gesture-status');
 const pointerMeta = document.getElementById('pointer-meta');
 const swatchBar = document.getElementById('swatches');
+const opacityInput = document.getElementById('opacity');
+const opacityOutput = document.getElementById('opacity-out');
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const round = (value, digits) => {
@@ -434,7 +436,7 @@ function drawPointer() {
   CursorSprite.draw(ctx, hx, hy, scale, {
     accent,
     glow: state.visual.glow,
-    opacity: 1,
+    opacity: state.visual.opacity,
     fill: '#ffffff',
     stroke: '#15171c'
   });
@@ -457,6 +459,12 @@ function syncPointerMeta() {
     size: state.visual.scale.toFixed(1),
     glow: Math.round(state.visual.glow * 100)
   });
+}
+
+function syncOpacity() {
+  if (!state) return;
+  opacityInput.value = String(state.visual.opacity);
+  opacityOutput.textContent = `${Math.round(state.visual.opacity * 100)}%`;
 }
 
 function localPoint(event) {
@@ -888,6 +896,14 @@ function bindStaticControls() {
   document.getElementById('gesture-test').addEventListener('click', () => runGesture(false));
   document.getElementById('gesture-calibrate').addEventListener('click', () => runGesture(true));
 
+  opacityInput.addEventListener('input', () => {
+    state.visual.opacity = round(Number(opacityInput.value), 2);
+    opacityOutput.textContent = `${Math.round(state.visual.opacity * 100)}%`;
+    drawPointer();
+    drawPreview(lastPreviewRatio);
+    touch();
+  });
+
   buildSwatches();
   bindPointer();
 }
@@ -897,6 +913,7 @@ function syncControls() {
   document.getElementById('autoStart').checked = Boolean(state.autoStart);
   syncSensitivity();
   syncSwatches();
+  syncOpacity();
   for (const card of cards) card.render();
   syncPointerMeta();
   drawPointer();

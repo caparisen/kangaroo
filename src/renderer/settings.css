@@ -356,6 +356,33 @@ select {
   justify-content: space-between;
   gap: 16px;
   margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.opacity-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 220px;
+  max-width: 280px;
+}
+
+.opacity-control span {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.opacity-control input[type="range"] {
+  flex: 1;
+}
+
+.opacity-control output {
+  width: 36px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .swatches {

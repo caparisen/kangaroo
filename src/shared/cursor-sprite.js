@@ -1,11 +1,11 @@
 /*
- * Draws the enlarged pointer used by both the live overlay and the settings preview.
- * Coordinates are CSS pixels; (x, y) is the pointer hotspot (the arrow tip).
+ * Draws the enlarged pointer used by the settings previews.
+ * The outline keeps a constant width so enlarging the pointer does not make
+ * the stroke thicker. Coordinates are CSS pixels; (x, y) is the arrow tip.
  */
 (function (root) {
   'use strict';
 
-  // Arrow outline in "cursor units". Tip at (0, 0).
   const ARROW = [
     [0, 0],
     [0, 17.2],
@@ -29,15 +29,6 @@
     return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, alpha))})`;
   }
 
-  function tracePath(ctx) {
-    ctx.beginPath();
-    ctx.moveTo(ARROW[0][0], ARROW[0][1]);
-    for (let i = 1; i < ARROW.length; i += 1) {
-      ctx.lineTo(ARROW[i][0], ARROW[i][1]);
-    }
-    ctx.closePath();
-  }
-
   function draw(ctx, x, y, scale, options) {
     const opts = options || {};
     const fill = opts.fill || '#ffffff';
@@ -45,6 +36,7 @@
     const accent = opts.accent || '#4da3ff';
     const glow = opts.glow === undefined ? 0.6 : opts.glow;
     const opacity = opts.opacity === undefined ? 1 : opts.opacity;
+    const strokeWidth = opts.strokeWidth === undefined ? 1.6 : opts.strokeWidth;
     const s = Math.max(0.01, scale);
 
     ctx.save();
@@ -65,13 +57,17 @@
       ctx.fill();
     }
 
-    ctx.scale(s, s);
-    tracePath(ctx);
+    ctx.beginPath();
+    ctx.moveTo(ARROW[0][0] * s, ARROW[0][1] * s);
+    for (let i = 1; i < ARROW.length; i += 1) {
+      ctx.lineTo(ARROW[i][0] * s, ARROW[i][1] * s);
+    }
+    ctx.closePath();
 
     ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    ctx.shadowBlur = 6;
+    ctx.shadowBlur = 5;
     ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 2.2;
+    ctx.shadowOffsetY = 1.6;
     ctx.fillStyle = fill;
     ctx.fill();
     ctx.shadowColor = 'transparent';
@@ -80,7 +76,7 @@
 
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    ctx.lineWidth = 1.35;
+    ctx.lineWidth = strokeWidth;
     ctx.strokeStyle = stroke;
     ctx.stroke();
 

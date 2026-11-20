@@ -10,8 +10,8 @@ const bridge = window.overlayBridge;
 const ARROW_SVG = [
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-32 -32 80 88">',
   '<path d="M0 0 L0 17.2 L4.3 13.2 L7 19.6 L10.1 18.3 L7.4 12 L13 12 Z"',
-  ' fill="#ffffff" stroke="#15171c" stroke-width="1.35" stroke-linejoin="round"',
-  ' stroke-linecap="round"/>',
+  ' fill="#ffffff" stroke="#15171c" stroke-width="1.6" vector-effect="non-scaling-stroke"',
+  ' stroke-linejoin="round" stroke-linecap="round"/>',
   '</svg>'
 ].join('');
 
