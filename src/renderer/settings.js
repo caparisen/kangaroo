@@ -40,8 +40,10 @@ const speedCanvas = document.getElementById('speed-curve');
 const speedLive = document.getElementById('speed-live');
 const minSpeedInput = document.getElementById('min-speed');
 const maxSpeedInput = document.getElementById('max-speed');
+const kickInput = document.getElementById('kick');
 const minSpeedOutput = document.getElementById('min-speed-out');
 const maxSpeedOutput = document.getElementById('max-speed-out');
+const kickOutput = document.getElementById('kick-out');
 const speedPresetSelect = document.getElementById('speed-preset');
 const speedCurveValue = document.getElementById('speed-curve-value');
 const pointerMeta = document.getElementById('pointer-meta');
@@ -651,16 +653,27 @@ function updateSpeedLive() {
   if (!state) return;
   const sample = lastSpeedSample;
   const speed = sample ? Math.round(sample.speed) : 0;
+  const accel = sample ? Math.round(sample.accel) : 0;
   const strength = sample ? clamp(sample.strength, 0, 1) : 0;
   const zoom = 1 + (state.visual.scale - 1) * strength;
-  speedLive.textContent = t('speedLive', { speed, scale: zoom.toFixed(2) });
+  speedLive.textContent = t('speedLive', {
+    speed,
+    accel,
+    scale: zoom.toFixed(2)
+  });
+}
+
+function updateKickOutput() {
+  kickOutput.textContent = state.speed.kick > 0 ? `${state.speed.kick} px/s²` : t('off');
 }
 
 function syncSpeed() {
   minSpeedInput.value = String(state.speed.min);
   maxSpeedInput.value = String(state.speed.max);
+  kickInput.value = String(state.speed.kick);
   minSpeedOutput.textContent = `${state.speed.min} px/s`;
   maxSpeedOutput.textContent = `${state.speed.max} px/s`;
+  updateKickOutput();
   speedCurveValue.textContent = `cubic-bezier(${state.speed.curve
     .map((value) => value.toFixed(2))
     .join(', ')})`;
@@ -683,6 +696,12 @@ function bindSpeed() {
   maxSpeedInput.addEventListener('input', () => {
     state.speed.max = Math.max(state.speed.min + 100, Number(maxSpeedInput.value));
     syncSpeed();
+    touch();
+  });
+
+  kickInput.addEventListener('input', () => {
+    state.speed.kick = Number(kickInput.value);
+    updateKickOutput();
     touch();
   });
 
@@ -845,6 +864,7 @@ function localizeSpeed() {
   }
   const custom = speedPresetSelect.querySelector('option[value="custom"]');
   if (custom) custom.textContent = t('custom');
+  updateKickOutput();
   updateSpeedLive();
 }
 

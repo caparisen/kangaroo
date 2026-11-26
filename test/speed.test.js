@@ -8,9 +8,21 @@ const { SpeedTracker } = require('../src/main/speed');
 const CONFIG = {
   min: 500,
   max: 2000,
+  kick: 0,
   curve: [0, 0, 1, 1],
   smoothingMs: 20,
   holdMs: 300
+};
+
+// Realistic smoothing with the acceleration pre-trigger enabled.
+const KICK_CONFIG = {
+  min: 800,
+  max: 2800,
+  kick: 8000,
+  curve: [0, 0, 1, 1],
+  smoothingMs: 40,
+  accelSmoothingMs: 20,
+  holdMs: 400
 };
 
 function makeTracker(overrides) {
@@ -26,6 +38,18 @@ function straight({ speed, duration, sampleMs = 16, t0 = 1000, x0 = 400, y0 = 30
       x: x0 + (speed * t) / 1000,
       y: y0
     });
+  }
+  return samples;
+}
+
+/** Speed ramps linearly to `speed` over `rampMs`, then stays constant. */
+function ramp({ speed, rampMs, duration, sampleMs = 16, t0 = 1000 }) {
+  const samples = [{ t: t0, x: 400, y: 300 }];
+  let x = 400;
+  for (let t = sampleMs; t <= duration; t += sampleMs) {
+    const v = Math.min(speed, (speed * t) / rampMs);
+    x += (v * sampleMs) / 1000;
+    samples.push({ t: t0 + t, x, y: 300 });
   }
   return samples;
 }
@@ -187,3 +211,56 @@ test('a long sampling gap does not keep the pointer enlarged', () => {
   assert.strictEqual(result.active, false);
   assert.strictEqual(result.deactivated, true);
 });
+
+test('acceleration pre-trigger fires before the speed threshold', () => {
+  const tracker = new SpeedTracker(KICK_CONFIG);
+  const results = feed(tracker, straight({ speed: 1200, duration: 600 }));
+  const activation = results.find((result) => result.activated);
+
+  assert.ok(activation, 'expected a pre-trigger');
+  assert.ok(activation.speed < KICK_CONFIG.min, `speed ${activation.speed}`);
+  assert.ok(Math.abs(activation.accel) >= KICK_CONFIG.kick, `accel ${activation.accel}`);
+  assert.strictEqual(activation.strength, 0);
+
+  const last = results[results.length - 1];
+  assert.strictEqual(last.active, true);
+  assert.ok(last.strength > 0.1, `strength ${last.strength}`);
+});
+
+test('without the acceleration threshold the overlay waits for the speed', () => {
+  const tracker = new SpeedTracker({ ...KICK_CONFIG, kick: 0 });
+  const results = feed(tracker, straight({ speed: 1200, duration: 600 }));
+  const activation = results.find((result) => result.activated);
+
+  assert.ok(activation, 'expected activation');
+  assert.ok(activation.speed >= KICK_CONFIG.min, `speed ${activation.speed}`);
+  assert.ok(activation.strength > 0);
+});
+
+test('a gentle ramp does not pre-trigger', () => {
+  const tracker = new SpeedTracker(KICK_CONFIG);
+  const results = feed(tracker, ramp({ speed: 1500, rampMs: 300, duration: 800 }));
+  const activation = results.find((result) => result.activated);
+
+  assert.ok(activation, 'expected activation');
+  assert.ok(activation.speed >= KICK_CONFIG.min, `speed ${activation.speed}`);
+  assert.ok(Math.abs(activation.accel) < KICK_CONFIG.kick, `accel ${activation.accel}`);
+});
+
+test('a pre-trigger alone does not enlarge the pointer', () => {
+  const tracker = new SpeedTracker(KICK_CONFIG);
+  const samples = [
+    { t: 1000, x: 400, y: 300 },
+    { t: 1016, x: 419.2, y: 300 },
+    { t: 1032, x: 438.4, y: 300 }
+  ];
+  for (let t = 1048; t <= 1500; t += 16) {
+    samples.push({ t, x: 438.4, y: 300 });
+  }
+
+  const results = feed(tracker, samples);
+  assert.ok(results.some((result) => result.activated));
+  assert.ok(results.every((result) => result.strength === 0));
+  assert.strictEqual(results[results.length - 1].active, false);
+});
+

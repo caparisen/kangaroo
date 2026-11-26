@@ -88,6 +88,7 @@ function poll() {
   if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible()) {
     settingsWindow.webContents.send('speed:sample', {
       speed: result.speed,
+      accel: result.accel,
       strength: result.strength,
       active: result.active
     });
@@ -96,7 +97,7 @@ function poll() {
 
 function sendIdleSample() {
   if (!settingsWindow || settingsWindow.isDestroyed() || !settingsWindow.isVisible()) return;
-  settingsWindow.webContents.send('speed:sample', { speed: 0, strength: 0, active: false });
+  settingsWindow.webContents.send('speed:sample', { speed: 0, accel: 0, strength: 0, active: false });
 }
 
 function applyConfig(config) {

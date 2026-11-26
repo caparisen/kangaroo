@@ -20,7 +20,7 @@ class OverlayManager {
     this.config = config;
     this.windows = new Map();
     this.ready = new Set();
-    this.pending = new Map();
+    this.pending = new Set();
     this.hideTimers = new Map();
     this.showTimers = new Map();
     this.active = null;
@@ -66,10 +66,9 @@ class OverlayManager {
 
     win.webContents.on('did-finish-load', () => {
       this.ready.add(win.id);
-      const queued = this.pending.get(win.id);
-      if (queued) {
+      if (this.pending.has(win.id)) {
         this.pending.delete(win.id);
-        this.sendShow(win, queued);
+        this.sendShow(win);
       }
     });
 
@@ -134,7 +133,15 @@ class OverlayManager {
     if (this.active && this.active.win !== win) {
       this.hideWindow(this.active.win, true);
     }
-    this.active = { win, displayId: display.id };
+    this.active = {
+      win,
+      displayId: display.id,
+      payload: {
+        x: point.x - display.bounds.x,
+        y: point.y - display.bounds.y,
+        strength: strength || 0
+      }
+    };
 
     const timer = this.hideTimers.get(win.id);
     if (timer) {
@@ -142,23 +149,16 @@ class OverlayManager {
       this.hideTimers.delete(win.id);
     }
 
-    const payload = {
-      x: point.x - display.bounds.x,
-      y: point.y - display.bounds.y,
-      strength: strength || 0,
-      config: this.config
-    };
-
     win.showInactive();
     win.setAlwaysOnTop(true, 'screen-saver');
     win.moveTop();
-    this.sendShow(win, payload);
+    this.sendShow(win);
   }
 
-  sendShow(win, payload) {
+  sendShow(win) {
     if (win.isDestroyed()) return;
     if (!this.ready.has(win.id)) {
-      this.pending.set(win.id, payload);
+      this.pending.add(win.id);
       return;
     }
     const existing = this.showTimers.get(win.id);
@@ -167,7 +167,10 @@ class OverlayManager {
       this.showTimers.delete(win.id);
       if (win.isDestroyed()) return;
       if (!this.active || this.active.win !== win) return;
-      win.webContents.send('overlay:show', payload);
+      win.webContents.send('overlay:show', {
+        ...this.active.payload,
+        config: this.config
+      });
     }, SHOW_DELAY_MS);
     this.showTimers.set(win.id, timer);
   }
@@ -191,12 +194,20 @@ class OverlayManager {
       this.show(point, strength);
       return;
     }
+
+    // Keep the queued show payload current: activation can start before the
+    // overlay is visible and the strength changes within SHOW_DELAY_MS.
+    const payload = this.active.payload;
+    payload.x = point.x - display.bounds.x;
+    payload.y = point.y - display.bounds.y;
+    payload.strength = strength || 0;
+
     const win = this.active.win;
     if (win.isDestroyed() || !this.ready.has(win.id)) return;
     win.webContents.send('overlay:move', {
-      x: point.x - display.bounds.x,
-      y: point.y - display.bounds.y,
-      strength: strength || 0
+      x: payload.x,
+      y: payload.y,
+      strength: payload.strength
     });
   }
 

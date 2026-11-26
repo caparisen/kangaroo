@@ -12,6 +12,7 @@ const DEFAULTS = {
   speed: {
     min: 800,
     max: 2800,
+    kick: 8000,
     curve: [0.25, 0.3, 0.6, 1]
   },
   visual: {
@@ -122,6 +123,7 @@ function sanitize(candidate) {
     speed: {
       min,
       max: Math.max(min + 100, max),
+      kick: Math.round(num(speed.kick, DEFAULTS.speed.kick, 0, 200000)),
       curve: normalizeSpeedCurve(speed.curve, DEFAULTS.speed.curve)
     },
     visual: {

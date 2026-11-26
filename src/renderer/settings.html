@@ -59,6 +59,13 @@
               <input id="max-speed" type="range" min="200" max="12000" step="100" />
             </label>
           </div>
+          <label class="field speed-kick">
+            <span class="field-head">
+              <span data-i18n="speedKick">Accel</span>
+              <output id="kick-out"></output>
+            </span>
+            <input id="kick" type="range" min="0" max="60000" step="500" />
+          </label>
           <canvas id="speed-curve" class="curve-canvas"></canvas>
           <div class="curve-row">
             <code id="speed-curve-value" class="curve-value"></code>

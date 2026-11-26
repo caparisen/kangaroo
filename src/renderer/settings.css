@@ -317,6 +317,11 @@ select {
   touch-action: none;
 }
 
+.speed-kick {
+  display: block;
+  margin-top: 14px;
+}
+
 .speed-card .curve-canvas {
   margin-top: 14px;
 }
