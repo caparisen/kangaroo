@@ -5,17 +5,14 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
 const DEFAULTS = {
-  version: 2,
+  version: 3,
   enabled: true,
   autoStart: false,
   language: 'en',
-  trigger: {
-    turns: 3,
-    windowMs: 600,
-    minSpeed: 900,
-    minArc: 90,
-    minPath: 550,
-    idleMs: 500
+  speed: {
+    min: 800,
+    max: 2800,
+    curve: [0.25, 0.3, 0.6, 1]
   },
   visual: {
     scale: 2.8,
@@ -84,6 +81,17 @@ function normalizeBezier(value, fallback) {
   ];
 }
 
+// Speed maps to the extra size, so control points stay inside 0..1.
+function normalizeSpeedCurve(value, fallback) {
+  if (!Array.isArray(value) || value.length !== 4) return fallback.slice();
+  return [
+    num(value[0], fallback[0], 0, 1),
+    num(value[1], fallback[1], 0, 1),
+    num(value[2], fallback[2], 0, 1),
+    num(value[3], fallback[3], 0, 1)
+  ];
+}
+
 function normalizeAnimationNode(node, defaults) {
   const source = isObject(node) ? node : {};
   const spring = isObject(source.spring) ? source.spring : {};
@@ -102,26 +110,19 @@ function normalizeAnimationNode(node, defaults) {
 function sanitize(candidate) {
   const source = isObject(candidate) ? candidate : {};
   const merged = merge(clone(DEFAULTS), source);
-  // Configs written before the trigger redesign have no turns/minArc keys;
-  // fall back to the new defaults instead of keeping the old tuned numbers.
-  const hasTriggerSchema =
-    isObject(source.trigger) &&
-    typeof source.trigger.turns === 'number' &&
-    typeof source.trigger.minArc === 'number';
-  const trigger = hasTriggerSchema ? merged.trigger : DEFAULTS.trigger;
+  const speed = merged.speed;
+  const min = Math.round(num(speed.min, DEFAULTS.speed.min, 100, 5000));
+  const max = Math.round(num(speed.max, DEFAULTS.speed.max, 200, 12000));
 
   return {
     version: DEFAULTS.version,
     enabled: merged.enabled !== false,
     autoStart: merged.autoStart === true,
     language: merged.language === 'zh' ? 'zh' : 'en',
-    trigger: {
-      turns: Math.round(num(trigger.turns, DEFAULTS.trigger.turns, 2, 8)),
-      windowMs: Math.round(num(trigger.windowMs, DEFAULTS.trigger.windowMs, 150, 2000)),
-      minSpeed: Math.round(num(trigger.minSpeed, DEFAULTS.trigger.minSpeed, 100, 5000)),
-      minArc: Math.round(num(trigger.minArc, DEFAULTS.trigger.minArc, 20, 400)),
-      minPath: Math.round(num(trigger.minPath, DEFAULTS.trigger.minPath, 100, 6000)),
-      idleMs: Math.round(num(trigger.idleMs, DEFAULTS.trigger.idleMs, 100, 3000))
+    speed: {
+      min,
+      max: Math.max(min + 100, max),
+      curve: normalizeSpeedCurve(speed.curve, DEFAULTS.speed.curve)
     },
     visual: {
       scale: num(merged.visual.scale, DEFAULTS.visual.scale, 1.2, 6),

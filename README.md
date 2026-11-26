@@ -1,6 +1,6 @@
 # Kangaroo
 
-Windows tray app: shake the mouse and a larger pointer appears; it shrinks back when you stop.
+Windows tray app: move the mouse quickly and a larger pointer appears; it shrinks back after you slow down.
 
 ## Run
 
@@ -21,27 +21,30 @@ Settings open automatically on the first launch. The tray menu can enable/disabl
 
 ## Usage
 
-- Shake the mouse quickly: the enlarged pointer appears and follows the cursor.
-- Stop shaking: the pointer shrinks back after about half a second.
-- Default trigger: 3 direction changes of at least 60°, 90 px between turns, 550 px of fast travel inside 600 ms and a 900 px/s peak. Small tremors and single flicks do not trigger; large fast circles do.
+- Move the mouse quickly: the enlarged pointer appears and follows the cursor.
+- The faster the movement, the larger the pointer. Size comes from the peak speed of the current movement.
+- Slow down or stop: the pointer stays for about 0.4 seconds, then shrinks back.
+- Only speed matters; the path you take and changes of direction are ignored.
 
 ## Settings
 
 - **Language**: English (default) or Chinese, also applied to the tray menu.
 - **Start with Windows** and **Enabled**: switches in the header.
-- **Trigger**:
-  - Sensitivity presets: Calm / Standard / Firm.
-  - Gesture monitor: shake anywhere on screen; the real cursor path, turns and thresholds are drawn live. The monitor ends automatically shortly after a trigger.
-  - **Test** to see whether a gesture would trigger, **Calibrate** to derive thresholds from your own shake.
-- **Pointer**: drag the handles on the preview to resize the pointer or strengthen the glow; click a colour swatch or pick a custom colour.
-- **Animations**: bezier curve editor with draggable control points and presets, or a spring with stiffness/damping/mass. The preview loops continuously.
+- **Speed**:
+  - **Start**: speed in px/s where magnification begins.
+  - **Full**: speed in px/s that reaches the configured pointer size.
+  - Curve editor: maps the speed between Start and Full to the extra size. Drag the two handles or pick a preset (linear, smooth, responsive, late).
+  - The live line shows the current cursor speed and the resulting zoom.
+- **Pointer**: drag the handles on the preview to resize the pointer or strengthen the glow; click a colour swatch or pick a custom colour; adjust opacity.
+- **Animations**: bezier curve editor with draggable control points and presets, or a spring with stiffness/damping/mass. Grow plays when the pointer appears, shrink when it retracts. The preview loops continuously.
 - Settings are stored in `%APPDATA%\kangaroo\config.json`.
 
 ## How it works
 
-- The main process samples the cursor every 12 ms and detects shakes from heading changes, travel distance and speed.
-- One transparent, click-through, always-on-top window per display draws the enlarged pointer as a DOM image; animations are computed by the shared easing/spring engine.
-- The settings window uses Canvas for the gesture monitor, the pointer editor and the animation previews.
+- The main process samples the cursor every 12 ms, smooths the movement speed, and maps it through the speed curve to a strength between 0 and 1.
+- The strongest speed of the current movement is held for 0.4 s before the pointer retracts, so it stays visible right after a fast flick.
+- One transparent, click-through, always-on-top window per display draws the enlarged pointer as a DOM image; grow/shrink animations come from the shared easing/spring engine.
+- The settings window uses Canvas for the speed curve, the pointer editor and the animation previews.
 
 ## Tests
 
@@ -49,10 +52,11 @@ Settings open automatically on the first launch. The tray menu can enable/disabl
 npm test
 ```
 
-Covers shake detection (real shakes, tremors, circular motion, slow movement, single flicks), calibration, config migration and the animation curves/spring.
+Covers speed smoothing and the curve mapping, the peak hold and retraction, trajectory independence, config migration and the animation curves/spring.
 
 ## Notes
 
+- Windows has no API that magnifies only the pointer: the system pointer size is a global, static accessibility setting, and the Magnification API enlarges screen content rather than the cursor. The app therefore draws the enlarged pointer itself.
 - The enlarged pointer is drawn above the system cursor, so the original cursor stays visible inside it.
 - Overlay windows only appear while the enlarged pointer is shown; they never intercept clicks.
 - In development mode "Start with Windows" registers `electron.exe` plus the project path; a packaged build registers the app itself.

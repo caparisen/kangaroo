@@ -12,9 +12,8 @@ const {
 } = require('electron');
 
 const { ConfigStore } = require('./config');
-const { ShakeDetector } = require('./shake');
+const { SpeedTracker } = require('./speed');
 const { OverlayManager } = require('./overlays');
-const { GestureSession } = require('./gesture');
 const { t } = require('../shared/i18n');
 
 const POLL_MS = 12;
@@ -29,13 +28,12 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings.js');
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 
 let store = null;
-let detector = null;
+let tracker = null;
 let overlays = null;
 let tray = null;
 let settingsWindow = null;
 let pollTimer = null;
 let autoStartApplied = null;
-let gestureSession = null;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -55,7 +53,7 @@ function boot() {
 
   store = new ConfigStore(path.join(app.getPath('userData'), 'config.json'));
   overlays = new OverlayManager(store.get());
-  detector = new ShakeDetector(store.get().trigger);
+  tracker = new SpeedTracker(store.get().speed);
 
   registerIpc();
   createTray();
@@ -73,26 +71,36 @@ function poll() {
   if (!store) return;
   const point = screen.getCursorScreenPoint();
   const now = Date.now();
-
-  if (gestureSession) gestureSession.push(now, point);
-
   const config = store.get();
   if (!config.enabled) return;
 
-  const result = detector.push(now, point.x, point.y);
+  const result = tracker.push(now, point.x, point.y);
 
   if (result.activated) {
-    overlays.show(point);
+    overlays.show(point, result.strength);
   }
   if (result.deactivated) {
     overlays.hide(false);
   } else if (result.active) {
-    overlays.move(point);
+    overlays.move(point, result.strength);
+  }
+
+  if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible()) {
+    settingsWindow.webContents.send('speed:sample', {
+      speed: result.speed,
+      strength: result.strength,
+      active: result.active
+    });
   }
 }
 
+function sendIdleSample() {
+  if (!settingsWindow || settingsWindow.isDestroyed() || !settingsWindow.isVisible()) return;
+  settingsWindow.webContents.send('speed:sample', { speed: 0, strength: 0, active: false });
+}
+
 function applyConfig(config) {
-  detector.setConfig(config.trigger);
+  tracker.setConfig(config.speed);
   overlays.setConfig(config);
   updateTrayMenu();
   applyAutoStart(config.autoStart);
@@ -102,8 +110,9 @@ function applyConfig(config) {
   }
 
   if (!config.enabled) {
-    detector.reset();
+    tracker.reset();
     overlays.hide(true);
+    sendIdleSample();
   }
 }
 
@@ -149,10 +158,16 @@ function updateTrayMenu() {
         click: (item) => setEnabled(item.checked)
       },
       { label: t(language, 'traySettings'), click: () => openSettings() },
+      { label: t(language, 'trayRestart'), click: () => restartApp() },
       { type: 'separator' },
       { label: t(language, 'trayQuit'), click: () => app.quit() }
     ])
   );
+}
+
+function restartApp() {
+  app.relaunch();
+  app.quit();
 }
 
 function openSettings() {
@@ -192,37 +207,12 @@ function registerIpc() {
   ipcMain.handle('config:get', () => store.get());
   ipcMain.handle('config:update', (_event, patch) => store.update(patch));
   ipcMain.handle('config:reset', () => store.reset());
-  ipcMain.handle('gesture:run', (event, options) => startGesture(event, options));
   ipcMain.on('overlay:done', (event) => overlays.finished(event.sender));
-}
-
-function startGesture(event, options) {
-  if (gestureSession) return Promise.resolve({ busy: true });
-
-  const durationMs = Math.min(10000, Math.max(2000, Number(options && options.durationMs) || 6000));
-  const calibrate = Boolean(options && options.calibrate);
-
-  return new Promise((resolve) => {
-    gestureSession = new GestureSession({
-      webContents: event.sender,
-      trigger: store.get().trigger,
-      durationMs,
-      calibrate,
-      onFinish: (result) => {
-        gestureSession = null;
-        if (result.calibration) {
-          store.update({ trigger: { ...store.get().trigger, ...result.calibration } });
-        }
-        resolve(result);
-      }
-    });
-  });
 }
 
 function shutdown() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = null;
-  if (gestureSession) gestureSession.finish();
   if (overlays) overlays.destroy();
   if (store) store.save();
   if (tray && !tray.isDestroyed()) tray.destroy();

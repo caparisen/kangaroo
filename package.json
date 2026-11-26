@@ -2,7 +2,7 @@
   "name": "kangaroo",
   "version": "0.1.0",
   "private": true,
-  "description": "晃动鼠标放大光标，停止晃动自动收起",
+  "description": "快速移动鼠标放大光标，速度决定放大倍数",
   "main": "src/main/main.js",
   "scripts": {
     "start": "node scripts/start.js",

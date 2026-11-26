@@ -3,17 +3,17 @@
 const api = window.kangaroo;
 const t = (key, vars) => I18n.t(state ? state.language : 'en', key, vars);
 
-const SENSITIVITY = {
-  calm: { turns: 2, windowMs: 700, minSpeed: 750, minArc: 70, minPath: 400 },
-  standard: { turns: 3, windowMs: 600, minSpeed: 900, minArc: 90, minPath: 550 },
-  firm: { turns: 4, windowMs: 550, minSpeed: 1100, minArc: 120, minPath: 750 }
-};
+const SPEED_PRESETS = [
+  { id: 'linear', bezier: [0, 0, 1, 1] },
+  { id: 'smooth', bezier: [0.25, 0.3, 0.6, 1] },
+  { id: 'fast', bezier: [0.12, 0.55, 0.45, 1] },
+  { id: 'late', bezier: [0.55, 0.05, 0.75, 1] }
+];
 
 const PALETTE = ['#4da3ff', '#ffffff', '#ffd166', '#ff6b6b', '#7bd88f', '#c792ea', '#ff9f43'];
 
 const PREVIEW_HEIGHT = 232;
 const POINTER_HEIGHT = 300;
-const GESTURE_HEIGHT = 200;
 
 const ARROW_W = 13;
 const ARROW_H = 19.6;
@@ -29,17 +29,21 @@ let previewRaf = 0;
 let previewHoldAt = 0;
 let lastPreviewRatio = 0;
 
-let gestureState = { phase: 'idle', calibrate: false, triggered: false, calibration: null };
-let gestureBusy = false;
-let lastGestureSample = null;
+let lastSpeedSample = null;
 
 let pointerGeometry = null;
 let pointerDrag = null;
 
 const previewCanvas = document.getElementById('preview');
 const pointerCanvas = document.getElementById('pointer');
-const gestureCanvas = document.getElementById('gesture');
-const gestureStatus = document.getElementById('gesture-status');
+const speedCanvas = document.getElementById('speed-curve');
+const speedLive = document.getElementById('speed-live');
+const minSpeedInput = document.getElementById('min-speed');
+const maxSpeedInput = document.getElementById('max-speed');
+const minSpeedOutput = document.getElementById('min-speed-out');
+const maxSpeedOutput = document.getElementById('max-speed-out');
+const speedPresetSelect = document.getElementById('speed-preset');
+const speedCurveValue = document.getElementById('speed-curve-value');
 const pointerMeta = document.getElementById('pointer-meta');
 const swatchBar = document.getElementById('swatches');
 const opacityInput = document.getElementById('opacity');
@@ -459,6 +463,7 @@ function syncPointerMeta() {
     size: state.visual.scale.toFixed(1),
     glow: Math.round(state.visual.glow * 100)
   });
+  updateSpeedLive();
 }
 
 function syncOpacity() {
@@ -524,6 +529,7 @@ function bindPointer() {
 
     syncPointerMeta();
     drawPointer();
+    drawSpeedCurve();
     drawPreview(lastPreviewRatio);
     touch();
   });
@@ -540,166 +546,203 @@ function bindPointer() {
   pointerCanvas.addEventListener('pointercancel', endDrag);
 }
 
-/* ---------------------------------------------------------------- gesture */
+/* ------------------------------------------------------------------ speed */
 
-function setGestureStatus(text) {
-  gestureStatus.textContent = text;
+function speedControlPixels(bezier, plot) {
+  return [
+    { x: plot.x + bezier[0] * plot.w, y: curveY(bezier[1], plot, 0, 1) },
+    { x: plot.x + bezier[2] * plot.w, y: curveY(bezier[3], plot, 0, 1) }
+  ];
 }
 
-function updateLiveStatus(sample) {
-  if (!sample || !sample.points || sample.points.length < 2) {
-    setGestureStatus(t(gestureState.calibrate ? 'calibrating' : 'gestureListening'));
-    return;
-  }
-  const metrics = sample.metrics;
-  const thresholds = sample.thresholds;
-  setGestureStatus(
-    t('gestureLive', {
-      path: Math.round(metrics.path),
-      minPath: thresholds.minPath,
-      turns: metrics.turns,
-      minTurns: thresholds.turns,
-      peak: Math.round(metrics.peak),
-      minSpeed: thresholds.minSpeed
-    })
-  );
-}
-
-function renderGestureStatus() {
-  if (gestureState.phase === 'listening') {
-    updateLiveStatus(lastGestureSample);
-    return;
-  }
-  if (gestureState.phase === 'done') {
-    if (gestureState.calibrate) {
-      setGestureStatus(t(gestureState.calibration ? 'calibrated' : 'calibrateFailed'));
-    } else {
-      setGestureStatus(t(gestureState.triggered ? 'gestureTriggered' : 'gestureMissed'));
-    }
-    return;
-  }
-  setGestureStatus(t('gestureIdle'));
-}
-
-function updateGestureButtons() {
-  document.getElementById('gesture-test').disabled = gestureBusy;
-  document.getElementById('gesture-calibrate').disabled = gestureBusy;
-}
-
-function drawGesture() {
-  const { ctx, width, height } = prepareCanvas(gestureCanvas, GESTURE_HEIGHT);
-  const sample = lastGestureSample;
-
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
-  ctx.lineWidth = 1;
-  for (let x = 20; x < width; x += 40) strokeLine(ctx, x, 0, x, height);
-  for (let y = 20; y < height; y += 40) strokeLine(ctx, 0, y, width, y);
-
-  if (!sample || !sample.points || sample.points.length < 2) return;
-
-  const points = sample.points;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const point of points) {
-    minX = Math.min(minX, point.x);
-    minY = Math.min(minY, point.y);
-    maxX = Math.max(maxX, point.x);
-    maxY = Math.max(maxY, point.y);
-  }
-
-  const padding = 30;
-  const worldW = Math.max(160, maxX - minX);
-  const worldH = Math.max(120, maxY - minY);
-  const scale = Math.min(
-    (width - padding * 2) / worldW,
-    (height - padding * 2) / worldH,
-    2.2
-  );
-  const offsetX = width / 2 - ((minX + maxX) / 2) * scale;
-  const offsetY = height / 2 - ((minY + maxY) / 2) * scale;
-  const map = (point) => ({ x: point.x * scale + offsetX, y: point.y * scale + offsetY });
-
+function drawSpeedCurve() {
+  if (!state) return;
+  const { ctx, width, height } = prepareCanvas(speedCanvas, 200);
+  const plot = plotRect(width, height);
+  const { min, max, curve } = state.speed;
   const accent = state.visual.accent;
+  const toX = (value) => plot.x + value * plot.w;
+  const toY = (value) => curveY(value, plot, 0, 1);
 
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.055)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    strokeLine(ctx, toX(i / 4), plot.y, toX(i / 4), plot.y + plot.h);
+    strokeLine(ctx, plot.x, toY(i / 4), plot.x + plot.w, toY(i / 4));
+  }
+
+  ctx.setLineDash([4, 5]);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+  strokeLine(ctx, toX(0), toY(0), toX(1), toY(1));
+  ctx.setLineDash([]);
+
+  const ease = Curves.cubicBezier(curve[0], curve[1], curve[2], curve[3]);
   ctx.beginPath();
-  points.forEach((point, index) => {
-    const mapped = map(point);
-    if (index === 0) ctx.moveTo(mapped.x, mapped.y);
-    else ctx.lineTo(mapped.x, mapped.y);
-  });
+  for (let i = 0; i <= 180; i += 1) {
+    const p = i / 180;
+    const x = toX(p);
+    const y = toY(ease(p));
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
   ctx.strokeStyle = accent;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.5;
   ctx.lineJoin = 'round';
   ctx.stroke();
 
-  if (sample.turns) {
-    for (const turn of sample.turns) {
-      const mapped = map(turn);
-      ctx.beginPath();
-      ctx.arc(mapped.x, mapped.y, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = '#0d1014';
-      ctx.fill();
-      ctx.strokeStyle = accent;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
+  const handles = speedControlPixels(curve, plot);
+  ctx.strokeStyle = clipAlpha(accent, 0.4);
+  ctx.lineWidth = 1.5;
+  strokeLine(ctx, toX(0), toY(0), handles[0].x, handles[0].y);
+  strokeLine(ctx, toX(1), toY(1), handles[1].x, handles[1].y);
+
+  for (const handle of handles) {
+    ctx.beginPath();
+    ctx.arc(handle.x, handle.y, 6.5, 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0d1014';
+    ctx.stroke();
   }
 
-  const last = map(points[points.length - 1]);
-  ctx.beginPath();
-  ctx.arc(last.x, last.y, 4.5, 0, Math.PI * 2);
-  ctx.fillStyle = accent;
-  ctx.fill();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.32)';
+  ctx.font = '10px "Segoe UI", sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right';
+  ctx.fillText('1×', plot.x - 8, toY(0));
+  ctx.fillText(`${state.visual.scale.toFixed(1)}×`, plot.x - 8, toY(1));
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${min} px/s`, plot.x, plot.y + plot.h + 6);
+  ctx.textAlign = 'right';
+  ctx.fillText(`${max} px/s`, plot.x + plot.w, plot.y + plot.h + 6);
 }
 
-async function runGesture(calibrate) {
-  if (gestureBusy) return;
-  gestureBusy = true;
-  lastGestureSample = null;
-  gestureState = { phase: 'listening', calibrate, triggered: false, calibration: null };
-  updateGestureButtons();
-  renderGestureStatus();
-  drawGesture();
+function findSpeedPreset(bezier) {
+  return (
+    SPEED_PRESETS.find((preset) =>
+      preset.bezier.every((value, index) => Math.abs(value - bezier[index]) < 0.005)
+    ) || null
+  );
+}
 
-  try {
-    const result = await api.runGesture({ calibrate, durationMs: 6000 });
-    if (!result || result.busy) {
-      gestureState.phase = 'idle';
-    } else {
-      gestureState.phase = 'done';
-      gestureState.triggered = Boolean(result.triggered);
-      gestureState.calibration = result.calibration || null;
-      if (result.trace && result.trace.points && result.trace.points.length) {
-        lastGestureSample = {
-          points: result.trace.points,
-          turns: result.trace.turns || [],
-          metrics: result.metrics || {},
-          thresholds: state.trigger,
-          triggered: gestureState.triggered
-        };
-      }
-      if (gestureState.calibration) {
-        state.trigger = { ...state.trigger, ...gestureState.calibration };
-        syncSensitivity();
-      }
-    }
-  } catch (error) {
-    gestureState.phase = 'idle';
-  } finally {
-    gestureBusy = false;
-    updateGestureButtons();
-    renderGestureStatus();
-    drawGesture();
+function buildSpeedPresets() {
+  for (const preset of SPEED_PRESETS) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.dataset.preset = preset.id;
+    option.textContent = t(`speedPreset_${preset.id}`);
+    speedPresetSelect.appendChild(option);
   }
+  const custom = document.createElement('option');
+  custom.value = 'custom';
+  custom.textContent = t('custom');
+  custom.disabled = true;
+  speedPresetSelect.appendChild(custom);
 }
 
-api.onGestureSample((sample) => {
-  if (!gestureBusy) return;
-  lastGestureSample = sample;
-  drawGesture();
-  if (gestureState.phase === 'listening') updateLiveStatus(sample);
+function syncSpeedPreset() {
+  const preset = findSpeedPreset(state.speed.curve);
+  speedPresetSelect.value = preset ? preset.id : 'custom';
+}
+
+function updateSpeedLive() {
+  if (!state) return;
+  const sample = lastSpeedSample;
+  const speed = sample ? Math.round(sample.speed) : 0;
+  const strength = sample ? clamp(sample.strength, 0, 1) : 0;
+  const zoom = 1 + (state.visual.scale - 1) * strength;
+  speedLive.textContent = t('speedLive', { speed, scale: zoom.toFixed(2) });
+}
+
+function syncSpeed() {
+  minSpeedInput.value = String(state.speed.min);
+  maxSpeedInput.value = String(state.speed.max);
+  minSpeedOutput.textContent = `${state.speed.min} px/s`;
+  maxSpeedOutput.textContent = `${state.speed.max} px/s`;
+  speedCurveValue.textContent = `cubic-bezier(${state.speed.curve
+    .map((value) => value.toFixed(2))
+    .join(', ')})`;
+  syncSpeedPreset();
+  drawSpeedCurve();
+  updateSpeedLive();
+}
+
+function bindSpeed() {
+  buildSpeedPresets();
+
+  minSpeedInput.addEventListener('input', () => {
+    const value = Number(minSpeedInput.value);
+    state.speed.min = value;
+    if (state.speed.max < value + 100) state.speed.max = Math.min(12000, value + 100);
+    syncSpeed();
+    touch();
+  });
+
+  maxSpeedInput.addEventListener('input', () => {
+    state.speed.max = Math.max(state.speed.min + 100, Number(maxSpeedInput.value));
+    syncSpeed();
+    touch();
+  });
+
+  speedPresetSelect.addEventListener('change', () => {
+    const preset = SPEED_PRESETS.find((item) => item.id === speedPresetSelect.value);
+    if (!preset) return;
+    state.speed.curve = preset.bezier.slice();
+    syncSpeed();
+    touch();
+  });
+
+  let dragIndex = -1;
+  let dragPointer = -1;
+
+  speedCanvas.addEventListener('pointerdown', (event) => {
+    const rect = speedCanvas.getBoundingClientRect();
+    const plot = plotRect(rect.width, rect.height);
+    const handles = speedControlPixels(state.speed.curve, plot);
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const first = Math.hypot(x - handles[0].x, y - handles[0].y);
+    const second = Math.hypot(x - handles[1].x, y - handles[1].y);
+    const index = first <= second ? 0 : 1;
+    if (Math.min(first, second) > 26) return;
+
+    dragIndex = index;
+    dragPointer = event.pointerId;
+    speedCanvas.setPointerCapture(event.pointerId);
+    speedCanvas.style.cursor = 'grabbing';
+    event.preventDefault();
+  });
+
+  speedCanvas.addEventListener('pointermove', (event) => {
+    if (dragIndex < 0 || event.pointerId !== dragPointer) return;
+    const rect = speedCanvas.getBoundingClientRect();
+    const plot = plotRect(rect.width, rect.height);
+    const p = (event.clientX - rect.left - plot.x) / plot.w;
+    const v = 1 - (event.clientY - rect.top - plot.y) / plot.h;
+    state.speed.curve[dragIndex * 2] = round(clamp(p, 0, 1));
+    state.speed.curve[dragIndex * 2 + 1] = round(clamp(v, 0, 1));
+    syncSpeed();
+    touch();
+  });
+
+  function endDrag(event) {
+    if (dragIndex < 0) return;
+    if (event && event.pointerId !== dragPointer) return;
+    dragIndex = -1;
+    dragPointer = -1;
+    speedCanvas.style.cursor = 'crosshair';
+    flushSave();
+  }
+
+  speedCanvas.addEventListener('pointerup', endDrag);
+  speedCanvas.addEventListener('pointercancel', endDrag);
+}
+
+api.onSpeedSample((sample) => {
+  lastSpeedSample = sample;
+  updateSpeedLive();
 });
 
 /* ---------------------------------------------------------------- preview */
@@ -730,10 +773,11 @@ function drawPreviewBackground(ctx, width, height) {
 function drawPreview(ratio) {
   const { ctx, width, height } = prepareCanvas(previewCanvas, PREVIEW_HEIGHT);
   drawPreviewBackground(ctx, width, height);
-  if (!state || ratio <= 0.001) return;
+  if (!state) return;
 
   const visual = state.visual;
-  CursorSprite.draw(ctx, width * 0.5, height * 0.52, visual.scale * ratio, {
+  const scale = 1 + (visual.scale - 1) * clamp(ratio, 0, 1.25);
+  CursorSprite.draw(ctx, width * 0.5, height * 0.52, scale, {
     accent: visual.accent,
     glow: visual.glow,
     opacity: visual.opacity,
@@ -787,29 +831,21 @@ function applyLanguage() {
     element.textContent = t(element.dataset.i18n);
   }
   for (const card of cards) card.localize();
+  localizeSpeed();
   updateLanguageButtons();
   syncPointerMeta();
-  renderGestureStatus();
   drawPointer();
-  drawGesture();
+  drawSpeedCurve();
   drawPreview(lastPreviewRatio);
 }
 
-/* -------------------------------------------------------------- sensitivity */
-
-function matchSensitivity() {
-  for (const [level, preset] of Object.entries(SENSITIVITY)) {
-    const matches = Object.keys(preset).every((key) => state.trigger[key] === preset[key]);
-    if (matches) return level;
+function localizeSpeed() {
+  for (const option of speedPresetSelect.querySelectorAll('option[data-preset]')) {
+    option.textContent = t(`speedPreset_${option.dataset.preset}`);
   }
-  return null;
-}
-
-function syncSensitivity() {
-  const level = matchSensitivity();
-  for (const button of document.querySelectorAll('#sensitivity [data-level]')) {
-    button.setAttribute('aria-pressed', String(button.dataset.level === level));
-  }
+  const custom = speedPresetSelect.querySelector('option[value="custom"]');
+  if (custom) custom.textContent = t('custom');
+  updateSpeedLive();
 }
 
 /* ---------------------------------------------------------------- swatches */
@@ -849,6 +885,7 @@ function setAccent(color) {
   state.visual.accent = color.toLowerCase();
   syncSwatches();
   drawPointer();
+  drawSpeedCurve();
   drawPreview(lastPreviewRatio);
   touch();
 }
@@ -861,16 +898,6 @@ function bindStaticControls() {
       if (state.language === button.dataset.lang) return;
       state.language = button.dataset.lang;
       applyLanguage();
-      touch();
-    });
-  }
-
-  for (const button of document.querySelectorAll('#sensitivity [data-level]')) {
-    button.addEventListener('click', () => {
-      const preset = SENSITIVITY[button.dataset.level];
-      if (!preset) return;
-      state.trigger = { ...state.trigger, ...preset };
-      syncSensitivity();
       touch();
     });
   }
@@ -893,8 +920,6 @@ function bindStaticControls() {
   });
 
   document.getElementById('play').addEventListener('click', () => playPreview());
-  document.getElementById('gesture-test').addEventListener('click', () => runGesture(false));
-  document.getElementById('gesture-calibrate').addEventListener('click', () => runGesture(true));
 
   opacityInput.addEventListener('input', () => {
     state.visual.opacity = round(Number(opacityInput.value), 2);
@@ -906,12 +931,13 @@ function bindStaticControls() {
 
   buildSwatches();
   bindPointer();
+  bindSpeed();
 }
 
 function syncControls() {
   document.getElementById('enabled').checked = Boolean(state.enabled);
   document.getElementById('autoStart').checked = Boolean(state.autoStart);
-  syncSensitivity();
+  syncSpeed();
   syncSwatches();
   syncOpacity();
   for (const card of cards) card.render();
@@ -950,7 +976,7 @@ function schedulePreview() {
 function handleResize() {
   for (const card of cards) card.render();
   drawPointer();
-  drawGesture();
+  drawSpeedCurve();
   drawPreview(lastPreviewRatio);
 }
 
@@ -975,7 +1001,6 @@ async function init() {
   });
 
   window.addEventListener('resize', handleResize);
-  updateGestureButtons();
   requestAnimationFrame(() => playPreview());
 }
 

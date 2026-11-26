@@ -26,6 +26,7 @@ let arrow = null;
 
 let config = null;
 let point = { x: 0, y: 0 };
+let strength = 0;
 let animator = null;
 let rafId = 0;
 let shrinking = false;
@@ -68,14 +69,16 @@ function place(element, x, y, width, height) {
 }
 
 function render(ratio) {
-  if (!glow || !arrow || !config || ratio <= 0.0005) {
+  // ratio is the appear/shrink envelope; strength comes from the cursor speed.
+  const effective = ratio * strength;
+  if (!glow || !arrow || !config || effective <= 0.002) {
     if (glow) glow.style.opacity = '0';
     if (arrow) arrow.style.opacity = '0';
     return;
   }
   const visual = config.visual;
-  const scale = visual.scale * ratio;
-  const fade = Math.min(1, ratio * 2.2);
+  const scale = 1 + (visual.scale - 1) * effective;
+  const fade = Math.min(1, effective * 4);
   const opacity = String(visual.opacity * fade);
 
   place(arrow, point.x - 32 * scale, point.y - 32 * scale, 80 * scale, 88 * scale);
@@ -118,6 +121,7 @@ function ensureAnimator() {
 bridge.onShow((payload) => {
   config = payload.config;
   point = { x: payload.x, y: payload.y };
+  strength = Number(payload.strength) || 0;
   shrinking = false;
   buildElements();
   applyConfig();
@@ -127,6 +131,7 @@ bridge.onShow((payload) => {
 
 bridge.onMove((payload) => {
   point = { x: payload.x, y: payload.y };
+  strength = Number(payload.strength) || 0;
 });
 
 bridge.onHide(() => {

@@ -8,11 +8,12 @@ const PAGE = path.join(__dirname, '..', 'renderer', 'overlay.html');
 
 // Give the compositor a moment after the window becomes visible before the
 // animation starts; otherwise the first frames can be dropped on Windows.
-const SHOW_DELAY_MS = 140;
+// Magnification follows the cursor speed, so the wait stays short.
+const SHOW_DELAY_MS = 40;
 
 /**
  * One transparent, click-through, always-on-top window per display.
- * Windows are created once and only shown while the shake animation runs.
+ * Windows are created once and only shown while the pointer is enlarged.
  */
 class OverlayManager {
   constructor(config) {
@@ -121,7 +122,7 @@ class OverlayManager {
     }
   }
 
-  show(point) {
+  show(point, strength) {
     const display = screen.getDisplayNearestPoint({
       x: Math.round(point.x),
       y: Math.round(point.y)
@@ -144,6 +145,7 @@ class OverlayManager {
     const payload = {
       x: point.x - display.bounds.x,
       y: point.y - display.bounds.y,
+      strength: strength || 0,
       config: this.config
     };
 
@@ -179,21 +181,22 @@ class OverlayManager {
     }
   }
 
-  move(point) {
+  move(point, strength) {
     if (!this.active) return;
     const display = screen.getDisplayNearestPoint({
       x: Math.round(point.x),
       y: Math.round(point.y)
     });
     if (display.id !== this.active.displayId) {
-      this.show(point);
+      this.show(point, strength);
       return;
     }
     const win = this.active.win;
     if (win.isDestroyed() || !this.ready.has(win.id)) return;
     win.webContents.send('overlay:move', {
       x: point.x - display.bounds.x,
-      y: point.y - display.bounds.y
+      y: point.y - display.bounds.y,
+      strength: strength || 0
     });
   }
 

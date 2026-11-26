@@ -41,24 +41,31 @@
       </section>
 
       <section>
-        <h2 data-i18n="trigger">Trigger</h2>
-        <div class="card">
-          <div class="segmented" id="sensitivity">
-            <button type="button" data-level="calm" data-i18n="calm">Calm</button>
-            <button type="button" data-level="standard" data-i18n="standard">Standard</button>
-            <button type="button" data-level="firm" data-i18n="firm">Firm</button>
+        <h2 data-i18n="speed">Speed</h2>
+        <div class="card speed-card">
+          <div class="fields">
+            <label class="field">
+              <span class="field-head">
+                <span data-i18n="speedStart">Start</span>
+                <output id="min-speed-out"></output>
+              </span>
+              <input id="min-speed" type="range" min="100" max="5000" step="50" />
+            </label>
+            <label class="field">
+              <span class="field-head">
+                <span data-i18n="speedFull">Full</span>
+                <output id="max-speed-out"></output>
+              </span>
+              <input id="max-speed" type="range" min="200" max="12000" step="100" />
+            </label>
           </div>
-          <canvas id="gesture"></canvas>
-          <div class="gesture-foot">
-            <span id="gesture-status" class="gesture-status" data-i18n="gestureIdle"
-              >Shake the mouse anywhere on screen</span
-            >
-            <div class="gesture-actions">
-              <button id="gesture-test" class="button small" type="button" data-i18n="test">Test</button>
-              <button id="gesture-calibrate" class="button small" type="button" data-i18n="calibrate">
-                Calibrate
-              </button>
-            </div>
+          <canvas id="speed-curve" class="curve-canvas"></canvas>
+          <div class="curve-row">
+            <code id="speed-curve-value" class="curve-value"></code>
+            <select id="speed-preset" class="preset"></select>
+          </div>
+          <div class="speed-foot">
+            <span id="speed-live" class="speed-live"></span>
           </div>
         </div>
       </section>
